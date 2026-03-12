@@ -18,7 +18,7 @@ BIRTHDAYS = [
     ("Lucas Nithael", "4 de Abril"),
     ("Marcos", "13 de Setembro"),
     ("Renan Lisboa", "11 de Dezembro"),
-    ("Pablo", None),
+    ("Pablo", "17 de Fevereiro"),
     ("Thiago", "29 de Dezembro"),
 ]
 
@@ -86,7 +86,8 @@ async def notify_birthdays_monthly(app):
         else:
             msg = "Não há aniversariantes cadastrados para este mês."
         # Recupera todos os chats salvos
-        for chat_id in app.chat_ids:
+        chat_ids = app.bot_data.get("chat_ids", set())
+        for chat_id in chat_ids:
             try:
                 await app.bot.send_message(chat_id=chat_id, text=msg)
             except Exception:
@@ -95,20 +96,25 @@ async def notify_birthdays_monthly(app):
 # Handler para salvar chat_id de quem interagir
 async def save_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    if chat_id not in context.application.chat_ids:
-        context.application.chat_ids.add(chat_id)
+    chat_ids = context.application.bot_data.setdefault("chat_ids", set())
+    if chat_id not in chat_ids:
+        chat_ids.add(chat_id)
     # Não responde nada, só salva
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     # Set para guardar os chats que interagiram
-    app.chat_ids = set()
+    app.bot_data["chat_ids"] = set()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("aniversariantes", aniversariantes))
     # Salva chat_id de qualquer mensagem recebida
     app.add_handler(MessageHandler(filters.ALL, save_chat_id))
     # Inicia a tarefa de notificação automática
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     loop.create_task(notify_birthdays_monthly(app))
     print("Bot rodando. Envie /start ou /aniversariantes no Telegram.")
     app.run_polling()
