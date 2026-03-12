@@ -2,7 +2,7 @@ import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram.constants import ParseMode
-from src.config import TELEGRAM_TOKEN
+from config import TELEGRAM_TOKEN
 import asyncio
 
 # Lista de aniversariantes
