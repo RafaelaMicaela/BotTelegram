@@ -18,6 +18,7 @@ BIRTHDAYS = [
     ("Lucas Nithael", "4 de Abril"),
     ("Marcos", "13 de Setembro"),
     ("Renan Lisboa", "11 de Dezembro"),
+    ("Rafaela", "23 de Maio"),
     ("Pablo", "17 de Fevereiro"),
     ("Thiago", "29 de Dezembro"),
 ]
