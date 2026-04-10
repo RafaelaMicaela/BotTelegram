@@ -1,11 +1,11 @@
 import datetime
+import json
+import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram.constants import ParseMode
 from config import TELEGRAM_TOKEN
-import asyncio
 
-# Lista de aniversariantes
 BIRTHDAYS = [
     ("Arthur Melo", "29 de Janeiro"),
     ("Dennis", "3 de Janeiro"),
@@ -28,18 +28,33 @@ MONTHS = {
     "julho": 7, "agosto": 8, "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12
 }
 
+CHAT_IDS_FILE = "chat_ids.json"
+
+def load_chat_ids():
+    if os.path.exists(CHAT_IDS_FILE):
+        with open(CHAT_IDS_FILE, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+                return set(data)
+            except Exception:
+                pass
+    return set()
+
+def save_chat_ids(chat_ids):
+    with open(CHAT_IDS_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(chat_ids), f)
+
 def get_birthdays_for_month(month: int):
     aniversariantes = []
     for nome, data in BIRTHDAYS:
         if data:
             try:
-                dia, mes_nome = data.split(' de ')
+                dia_str, mes_nome = data.split(' de ')
                 if MONTHS[mes_nome.strip().lower()] == month:
                     aniversariantes.append(f"{nome}: {data}")
             except Exception:
                 continue
     return aniversariantes
-
 
 async def aniversariantes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hoje = datetime.datetime.now()
@@ -59,95 +74,106 @@ async def pizza(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await save_chat_id(update, context) # Salva o ID ao iniciar
     msg = (
         "Olá! Eu sou o bot de aniversariantes da eSigma 🎉.\n\n"
         "Comandos disponíveis:\n"
         "/aniversariantes - Mostra os aniversariantes do mês atual.\n"
         "/pizza - Avisa que hoje é dia de pizza!\n\n"
-        "Eu também envio automaticamente a lista de aniversariantes do mês no início de cada mês!"
+        "Eu também envio automaticamente os aniversariantes do mês e do dia!"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-# Função para notificar aniversariantes do mês em todos os chats conhecidos
-async def notify_birthdays_monthly(app):
-    while True:
-        now = datetime.datetime.now()
-        # Notifica no primeiro dia do mês às 09:00
-        next_run = now.replace(day=1, hour=9, minute=0, second=0, microsecond=0)
-        if now >= next_run:
-            # Se já passou do horário, agenda para o próximo mês
-            if next_run.month == 12:
-                next_run = next_run.replace(year=now.year+1, month=1)
-            else:
-                next_run = next_run.replace(month=now.month+1)
-        wait_seconds = (next_run - now).total_seconds()
-        await asyncio.sleep(wait_seconds)
-        # Envia para todos os chats conhecidos
-        aniversariantes_mes = get_birthdays_for_month(next_run.month)
-        if aniversariantes_mes:
-            msg = (
-                "Eita que esse mês tem Bolo! 🎂\n"
-                "Aniversariantes do mês:\n" + "\n".join(aniversariantes_mes)
-            )
-        else:
-            msg = "Não há aniversariantes cadastrados para este mês."
-        # Recupera todos os chats salvos
-        chat_ids = app.bot_data.get("chat_ids", set())
-        for chat_id in chat_ids:
-            try:
-                await app.bot.send_message(chat_id=chat_id, text=msg)
-            except Exception:
-                continue
-
-# Função para notificar do dia da pizza toda Sexta-feira
-async def notify_pizza_weekly(app):
-    while True:
-        now = datetime.datetime.now()
-        # Sexta-feira = dia 4 (0=Seg, 1=Ter, 2=Qua, 3=Qui, 4=Sex, 5=Sab, 6=Dom)
-        days_ahead = 4 - now.weekday()
-        
-        # Se já passou das 12:00 na sexta, ou se a sexta já passou na semana, agenda para a próxima
-        if days_ahead < 0 or (days_ahead == 0 and now.hour >= 12):
-            days_ahead += 7
-            
-        next_run = now + datetime.timedelta(days=days_ahead)
-        next_run = next_run.replace(hour=12, minute=0, second=0, microsecond=0)
-        
-        wait_seconds = (next_run - now).total_seconds()
-        await asyncio.sleep(wait_seconds)
-        
-        msg = "Atenção, pessoal! Passando para avisar que hoje é DIA DE PIZZA! 🍕🍕🍕"
-        chat_ids = app.bot_data.get("chat_ids", set())
-        for chat_id in chat_ids:
-            try:
-                await app.bot.send_message(chat_id=chat_id, text=msg)
-            except Exception:
-                continue
-
-# Handler para salvar chat_id de quem interagir
 async def save_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    chat_ids = context.application.bot_data.setdefault("chat_ids", set())
-    if chat_id not in chat_ids:
-        chat_ids.add(chat_id)
-    # Não responde nada, só salva
+    if update.effective_chat:
+        chat_id = update.effective_chat.id
+        chat_ids = load_chat_ids()
+        if chat_id not in chat_ids:
+            chat_ids.add(chat_id)
+            save_chat_ids(chat_ids)
+
+async def send_daily_notifications(context: ContextTypes.DEFAULT_TYPE):
+    chat_ids = load_chat_ids()
+    if not chat_ids:
+        return
+
+    hoje = datetime.datetime.now()
+    
+    # 1. Verifica se hoje é o primeiro dia do mês para listar todos do mês
+    if hoje.day == 1:
+        aniversariantes_mes = get_birthdays_for_month(hoje.month)
+        if aniversariantes_mes:
+            msg_mes = "Eita que esse mês tem Bolo! 🎂\nAniversariantes do mês:\n" + "\n".join(aniversariantes_mes)
+            for cid in chat_ids:
+                try: 
+                    await context.bot.send_message(chat_id=cid, text=msg_mes)
+                except Exception as e: 
+                    print(f"Erro ao enviar para {cid}: {e}")
+
+    # 2. Verifica se hoje tem algum aniversariante do dia
+    aniversariantes_hoje = []
+    for nome, data in BIRTHDAYS:
+        if data:
+            try:
+                dia_str, mes_nome = data.split(' de ')
+                dia = int(dia_str.strip())
+                mes_num = MONTHS[mes_nome.strip().lower()]
+                if dia == hoje.day and mes_num == hoje.month:
+                    aniversariantes_hoje.append(nome)
+            except Exception:
+                continue
+    
+    if aniversariantes_hoje:
+        if len(aniversariantes_hoje) == 1:
+            msg_hoje = f"🎉 Hoje é aniversário de {aniversariantes_hoje[0]}! Parabéns! 🎈🍰🎂"
+        else:
+            nomes_str = ", ".join(aniversariantes_hoje[:-1]) + " e " + aniversariantes_hoje[-1]
+            msg_hoje = f"🎉 Hoje é aniversário de {nomes_str}! Parabéns a todos! 🎈🍰🎂"
+            
+        for cid in chat_ids:
+            try: 
+                await context.bot.send_message(chat_id=cid, text=msg_hoje)
+            except Exception: 
+                pass
+
+async def send_pizza_notification(context: ContextTypes.DEFAULT_TYPE):
+    hoje = datetime.datetime.now()
+    # Verifica se hoje é dia 14
+    if hoje.day != 14:
+        return
+
+    chat_ids = load_chat_ids()
+    if not chat_ids:
+        return
+    msg = "Atenção, pessoal! Passando para avisar que hoje é DIA DE PIZZA! 🍕🍕🍕"
+    for cid in chat_ids:
+        try: 
+            await context.bot.send_message(chat_id=cid, text=msg)
+        except Exception: 
+            pass
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    # Set para guardar os chats que interagiram
-    app.bot_data["chat_ids"] = set()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("aniversariantes", aniversariantes))
     app.add_handler(CommandHandler("pizza", pizza))
-    # Salva chat_id de qualquer mensagem recebida
+    # Captura qualquer mensagem e salva o chat_id silenciosamente
     app.add_handler(MessageHandler(filters.ALL, save_chat_id))
-    # Inicia a tarefa de notificação automática
+
+    # Obtém o fuso horário local
     try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    loop.create_task(notify_birthdays_monthly(app))
-    loop.create_task(notify_pizza_weekly(app))
-    print("Bot rodando. Envie /start ou /aniversariantes no Telegram.")
+        local_tz = datetime.datetime.now().astimezone().tzinfo
+    except Exception:
+        local_tz = None
+
+    # Agenda a notificação diária (aniversariantes) para as 09:00
+    t_09 = datetime.time(hour=9, minute=0, tzinfo=local_tz)
+    app.job_queue.run_daily(send_daily_notifications, time=t_09)
+
+    # Agenda a notificação da pizza todos os dias às 12:00 (a lógica interna filtra pro dia 14)
+    t_12 = datetime.time(hour=12, minute=0, tzinfo=local_tz)
+    app.job_queue.run_daily(send_pizza_notification, time=t_12)
+
+    print("Bot rodando com agendamento ativo. Envie /start no Telegram para o bot registrar o chat.")
     app.run_polling()
